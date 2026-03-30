@@ -48,6 +48,60 @@ impl WebFetchTool {
         )
     }
 
+    /// Fall back to a text browser (lynx, links, w3m) when the HTTP client is
+    /// blocked (e.g. Cloudflare JS challenge returning 403).
+    async fn try_text_browser_fallback(
+        &self,
+        url: &str,
+        timeout_secs: u64,
+    ) -> Option<ToolResult> {
+        const BROWSERS: &[&str] = &["lynx", "links", "w3m"];
+
+        let browser = {
+            let mut found = None;
+            for b in BROWSERS {
+                if tokio::process::Command::new("which")
+                    .arg(b)
+                    .output()
+                    .await
+                    .map(|o| o.status.success())
+                    .unwrap_or(false)
+                {
+                    found = Some(*b);
+                    break;
+                }
+            }
+            found?
+        };
+
+        tracing::info!(
+            "web_fetch: HTTP 403, falling back to text browser '{browser}' for {url}"
+        );
+
+        let output = tokio::time::timeout(
+            Duration::from_secs(timeout_secs),
+            tokio::process::Command::new(browser)
+                .args(["-dump", url])
+                .output(),
+        )
+        .await;
+
+        match output {
+            Ok(Ok(o)) if o.status.success() => {
+                let text = String::from_utf8_lossy(&o.stdout).into_owned();
+                if text.trim().is_empty() {
+                    return None;
+                }
+                Some(ToolResult {
+                    success: true,
+                    output: self.truncate_response(&text),
+                    error: None,
+                })
+            }
+            _ => None,
+        }
+    }
+
     fn truncate_response(&self, text: &str) -> String {
         if text.len() > self.max_response_size {
             let mut truncated = text
@@ -200,6 +254,16 @@ impl Tool for WebFetchTool {
 
         let status = response.status();
         if !status.is_success() {
+            // On 403 (often Cloudflare JS challenge), fall back to a text browser
+            // (lynx/links/w3m) which can sometimes bypass simple bot protections.
+            if status.as_u16() == 403 {
+                if let Some(fallback) = self
+                    .try_text_browser_fallback(&url, timeout_secs)
+                    .await
+                {
+                    return Ok(fallback);
+                }
+            }
             return Ok(ToolResult {
                 success: false,
                 output: String::new(),

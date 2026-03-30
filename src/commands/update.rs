@@ -5,9 +5,9 @@ use std::path::Path;
 use tracing::{info, warn};
 
 const GITHUB_RELEASES_LATEST_URL: &str =
-    "https://api.github.com/repos/zeroclaw-labs/zeroclaw/releases/latest";
+    "https://api.github.com/repos/dqj1998/d-zeroclaw/releases/latest";
 const GITHUB_RELEASES_TAG_URL: &str =
-    "https://api.github.com/repos/zeroclaw-labs/zeroclaw/releases/tags";
+    "https://api.github.com/repos/dqj1998/d-zeroclaw/releases/tags";
 
 #[derive(Debug)]
 pub struct UpdateInfo {
