@@ -22,7 +22,6 @@ jobs:
     outputs:
       version: ${{ steps.ver.outputs.version }}
       tag: ${{ steps.ver.outputs.tag }}
-      skip: ${{ steps.ver.outputs.skip }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -35,16 +34,7 @@ jobs:
           base_version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)
           tag="v${base_version}-build.${GITHUB_RUN_NUMBER}"
 
-          # Skip if this is a docs/chore-only commit
-          commit_msg=$(git log -1 --pretty=format:"%s")
-          changed_files=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || echo "")
-          if echo "$changed_files" | grep -qvE '^(docs/|\.md$|\.github/workflows/)'; then
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "Docs/chore-only change — skipping build"
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
+          # Always build — skip logic removed to avoid false negatives
 
           echo "version=${base_version}" >> "$GITHUB_OUTPUT"
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
@@ -53,7 +43,7 @@ jobs:
   web:
     name: Build Web Dashboard
     needs: [version]
-    if: needs.version.outputs.skip != 'true'
+
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -74,7 +64,7 @@ jobs:
   build:
     name: Build ${{ matrix.target }}
     needs: [version, web]
-    if: needs.version.outputs.skip != 'true'
+
     runs-on: ${{ matrix.os }}
     timeout-minutes: 40
     strategy:
