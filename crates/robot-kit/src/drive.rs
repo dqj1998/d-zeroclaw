@@ -10,7 +10,7 @@ use crate::config::RobotConfig;
 use crate::traits::{Tool, ToolResult};
 use anyhow::Result;
 use async_trait::async_trait;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
@@ -258,16 +258,14 @@ impl Tool for DriveTool {
         // Safety: check max drive duration
         {
             let mut last = self.last_command.lock().await;
-            if let Some(instant) = *last {
-                if instant.elapsed() < Duration::from_secs(1) {
-                    return Ok(ToolResult {
-                        success: false,
-                        output: String::new(),
-                        error: Some(
-                            "Rate limited: wait 1 second between drive commands".to_string(),
-                        ),
-                    });
-                }
+            if let Some(instant) = *last
+                && instant.elapsed() < Duration::from_secs(1)
+            {
+                return Ok(ToolResult {
+                    success: false,
+                    output: String::new(),
+                    error: Some("Rate limited: wait 1 second between drive commands".to_string()),
+                });
             }
             *last = Some(std::time::Instant::now());
         }

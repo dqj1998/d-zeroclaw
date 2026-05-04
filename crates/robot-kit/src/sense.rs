@@ -7,7 +7,7 @@ use crate::config::RobotConfig;
 use crate::traits::{Tool, ToolResult};
 use anyhow::Result;
 use async_trait::async_trait;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -104,12 +104,11 @@ impl SenseTool {
                 // Parse output (format: angle,distance per line)
                 let mut ranges = vec![999.0; 360];
                 for line in String::from_utf8_lossy(&out.stdout).lines() {
-                    if let Some((angle, dist)) = line.split_once(',') {
-                        if let (Ok(a), Ok(d)) = (angle.parse::<usize>(), dist.parse::<f64>()) {
-                            if a < 360 {
-                                ranges[a] = d;
-                            }
-                        }
+                    if let Some((angle, dist)) = line.split_once(',')
+                        && let (Ok(a), Ok(d)) = (angle.parse::<usize>(), dist.parse::<f64>())
+                        && a < 360
+                    {
+                        ranges[a] = d;
                     }
                 }
 

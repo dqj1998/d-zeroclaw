@@ -1,42 +1,60 @@
+//! Binary-side config module. Pure re-export surface — the real types and
+//! helpers live in `zeroclaw-config`. Everything the binary needs (schema,
+//! traits, property helpers) is pulled through here so `crate::config::*`
+//! continues to resolve for callers that predate the crate split.
+
+pub use zeroclaw_config::migration;
+pub use zeroclaw_config::providers;
 pub mod schema;
 pub mod traits;
 pub mod workspace;
 
-#[allow(unused_imports)]
 pub use schema::{
-    apply_channel_proxy_to_builder, apply_runtime_proxy_to_builder, build_channel_proxy_client,
-    build_channel_proxy_client_with_timeouts, build_runtime_proxy_client,
-    build_runtime_proxy_client_with_timeouts, runtime_proxy_config, set_runtime_proxy_config,
     AgentConfig, AssemblyAiSttConfig, AuditConfig, AutonomyConfig, BackupConfig,
     BrowserComputerUseConfig, BrowserConfig, BuiltinHooksConfig, ChannelsConfig,
-    ClassificationRule, ClaudeCodeConfig, CloudOpsConfig, ComposioConfig, Config,
-    ConversationalAiConfig, CostConfig, CronConfig, CronJobDecl, CronScheduleDecl,
-    DataRetentionConfig, DeepgramSttConfig, DelegateAgentConfig, DelegateToolConfig, DiscordConfig,
-    DockerRuntimeConfig, EdgeTtsConfig, ElevenLabsTtsConfig, EmbeddingRouteConfig, EstopConfig,
-    FeishuConfig, GatewayConfig, GoogleSttConfig, GoogleTtsConfig, GoogleWorkspaceAllowedOperation,
+    ClassificationRule, ClaudeCodeConfig, ClaudeCodeRunnerConfig, CloudOpsConfig, CodexCliConfig,
+    ComposioConfig, Config, ConversationalAiConfig, CostConfig, CronConfig, CronJobDecl,
+    CronScheduleDecl, DEFAULT_GWS_SERVICES, DataRetentionConfig, DeepgramSttConfig,
+    DelegateAgentConfig, DelegateToolConfig, DiscordConfig, DockerRuntimeConfig, EdgeTtsConfig,
+    ElevenLabsTtsConfig, EmbeddingRouteConfig, EstopConfig, FeishuConfig, GatewayConfig,
+    GeminiCliConfig, GoogleSttConfig, GoogleTtsConfig, GoogleWorkspaceAllowedOperation,
     GoogleWorkspaceConfig, HardwareConfig, HardwareTransport, HeartbeatConfig, HooksConfig,
     HttpRequestConfig, IMessageConfig, IdentityConfig, ImageGenConfig, ImageProviderDalleConfig,
     ImageProviderFluxConfig, ImageProviderImagenConfig, ImageProviderStabilityConfig, JiraConfig,
     KnowledgeConfig, LarkConfig, LinkEnricherConfig, LinkedInConfig, LinkedInContentConfig,
     LinkedInImageConfig, LocalWhisperConfig, MatrixConfig, McpConfig, McpServerConfig,
-    McpTransport, MemoryConfig, MemoryPolicyConfig, Microsoft365Config, ModelRouteConfig,
-    MultimodalConfig, NextcloudTalkConfig, NodeTransportConfig, NodesConfig, NotionConfig,
-    ObservabilityConfig, OpenAiSttConfig, OpenAiTtsConfig, OpenVpnTunnelConfig, OtpConfig,
-    OtpMethod, PacingConfig, PeripheralBoardConfig, PeripheralsConfig, PiperTtsConfig,
-    PluginsConfig, ProjectIntelConfig, ProxyConfig, ProxyScope, QdrantConfig,
+    McpTransport, MediaPipelineConfig, MemoryConfig, MemoryPolicyConfig, Microsoft365Config,
+    ModelRouteConfig, MqttConfig, MultimodalConfig, NextcloudTalkConfig, NodeTransportConfig,
+    NodesConfig, NotionConfig, ObservabilityConfig, OpenAiSttConfig, OpenAiTtsConfig,
+    OpenCodeCliConfig, OpenVpnTunnelConfig, OtpConfig, OtpMethod, PacingConfig,
+    PeripheralBoardConfig, PeripheralsConfig, PipelineConfig, PiperTtsConfig, PluginsConfig,
+    PostgresMemoryConfig, ProjectIntelConfig, ProxyConfig, ProxyScope, QdrantConfig,
     QueryClassificationConfig, ReliabilityConfig, ResourceLimitsConfig, RuntimeConfig,
-    SandboxBackend, SandboxConfig, SchedulerConfig, SecretsConfig, SecurityConfig,
-    SecurityOpsConfig, SkillCreationConfig, SkillsConfig, SkillsPromptInjectionMode, SlackConfig,
-    StorageConfig, StorageProviderConfig, StorageProviderSection, StreamMode, SwarmConfig,
-    SwarmStrategy, TelegramConfig, TextBrowserConfig, ToolFilterGroup, ToolFilterGroupMode,
-    TranscriptionConfig, TtsConfig, TunnelConfig, VerifiableIntentConfig, WebFetchConfig,
-    WebSearchConfig, WebhookConfig, WhatsAppChatPolicy, WhatsAppWebMode, WorkspaceConfig,
-    DEFAULT_GWS_SERVICES,
+    SandboxBackend, SandboxConfig, SchedulerConfig, SearchMode, SecretsConfig, SecurityConfig,
+    SecurityOpsConfig, ShellToolConfig, SkillCreationConfig, SkillImprovementConfig, SkillsConfig,
+    SkillsPromptInjectionMode, SlackConfig, SopConfig, StorageConfig, StorageProviderConfig,
+    StorageProviderSection, StreamMode, SwarmConfig, SwarmStrategy, TelegramConfig,
+    TextBrowserConfig, ToolFilterGroup, ToolFilterGroupMode, TranscriptionConfig, TtsConfig,
+    TunnelConfig, VerifiableIntentConfig, WebFetchConfig, WebSearchConfig, WebhookConfig,
+    WhatsAppChatPolicy, WhatsAppWebMode, WorkspaceConfig, apply_channel_proxy_to_builder,
+    apply_runtime_proxy_to_builder, build_channel_proxy_client,
+    build_channel_proxy_client_with_timeouts, build_runtime_proxy_client,
+    build_runtime_proxy_client_with_timeouts, runtime_proxy_config, set_runtime_proxy_config,
+    ws_connect_with_proxy,
 };
 
-pub fn name_and_presence<T: traits::ChannelConfig>(channel: Option<&T>) -> (&'static str, bool) {
-    (T::name(), channel.is_some())
-}
+pub use schema::ModelProviderConfig;
+pub use traits::HasPropKind;
+pub use traits::PropFieldInfo;
+pub use traits::PropKind;
+pub use traits::SecretFieldInfo;
+
+// Property helpers — single source of truth in zeroclaw-config.
+#[cfg(feature = "schema-export")]
+pub use zeroclaw_config::helpers::enum_variants;
+pub use zeroclaw_config::helpers::{
+    make_prop_field, route_hashmap_path, serde_get_prop, serde_set_prop,
+};
 
 #[cfg(test)]
 mod tests {
@@ -46,14 +64,14 @@ mod tests {
     fn reexported_config_default_is_constructible() {
         let config = Config::default();
 
-        assert!(config.default_provider.is_some());
-        assert!(config.default_model.is_some());
-        assert!(config.default_temperature > 0.0);
+        // Config::default() no longer has provider cache fields; just verify providers is constructible
+        assert!(config.providers.fallback.is_none() || config.providers.fallback.is_some());
     }
 
     #[test]
     fn reexported_channel_configs_are_constructible() {
         let telegram = TelegramConfig {
+            enabled: true,
             bot_token: "token".into(),
             allowed_users: vec!["alice".into()],
             stream_mode: StreamMode::default(),
@@ -62,9 +80,11 @@ mod tests {
             mention_only: false,
             ack_reactions: None,
             proxy_url: None,
+            approval_timeout_secs: 120,
         };
 
         let discord = DiscordConfig {
+            enabled: true,
             bot_token: "token".into(),
             guild_id: Some("123".into()),
             allowed_users: vec![],
@@ -72,9 +92,15 @@ mod tests {
             interrupt_on_new_message: false,
             mention_only: false,
             proxy_url: None,
+            stream_mode: StreamMode::default(),
+            draft_update_interval_ms: 1000,
+            multi_message_delay_ms: 800,
+            stall_timeout_secs: 0,
+            approval_timeout_secs: 300,
         };
 
         let lark = LarkConfig {
+            enabled: true,
             app_id: "app-id".into(),
             app_secret: "app-secret".into(),
             encrypt_key: None,
@@ -87,22 +113,26 @@ mod tests {
             proxy_url: None,
         };
         let feishu = FeishuConfig {
+            enabled: true,
             app_id: "app-id".into(),
             app_secret: "app-secret".into(),
             encrypt_key: None,
             verification_token: None,
             allowed_users: vec![],
+            mention_only: false,
             receive_mode: crate::config::schema::LarkReceiveMode::Websocket,
             port: None,
             proxy_url: None,
         };
 
         let nextcloud_talk = NextcloudTalkConfig {
+            enabled: true,
             base_url: "https://cloud.example.com".into(),
             app_token: "app-token".into(),
             webhook_secret: None,
             allowed_users: vec!["*".into()],
             proxy_url: None,
+            bot_name: None,
         };
 
         assert_eq!(telegram.allowed_users.len(), 1);

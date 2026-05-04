@@ -8,6 +8,8 @@ import {
 } from 'lucide-react';
 import type { SSEEvent } from '@/types/api';
 import { SSEClient } from '@/lib/sse';
+import { getToken } from '@/lib/auth';
+import { apiOrigin, basePath } from '@/lib/basePath';
 import { t } from '@/lib/i18n';
 
 function formatTimestamp(ts?: string): string {
@@ -18,25 +20,25 @@ function formatTimestamp(ts?: string): string {
 function eventTypeStyle(type: string): { color: string; bg: string; border: string } {
   switch (type.toLowerCase()) {
     case 'error':
-      return { color: 'var(--color-status-error)', bg: 'rgba(239, 68, 68, 0.06)', border: 'rgba(239, 68, 68, 0.2)' };
+      return { color: 'var(--color-status-error)', bg: 'var(--color-status-error-alpha-08)', border: 'var(--color-status-error-alpha-20)' };
     case 'warn':
     case 'warning':
-      return { color: 'var(--color-status-warning)', bg: 'rgba(255, 170, 0, 0.06)', border: 'rgba(255, 170, 0, 0.2)' };
+      return { color: 'var(--color-status-warning)', bg: 'var(--color-status-warning-alpha-05)', border: 'var(--color-status-warning-alpha-20)' };
     case 'tool_call':
     case 'tool_result':
     case 'tool_call_start':
-      return { color: '#a78bfa', bg: 'rgba(167, 139, 250, 0.06)', border: 'rgba(167, 139, 250, 0.2)' };
+      return { color: 'var(--pc-accent)', bg: 'var(--pc-accent-glow)', border: 'var(--pc-accent-dim)' };
     case 'llm_request':
-      return { color: '#38bdf8', bg: 'rgba(56, 189, 248, 0.06)', border: 'rgba(56, 189, 248, 0.2)' };
+      return { color: 'var(--color-status-info)', bg: 'color-mix(in srgb, var(--color-status-info) 6%, transparent)', border: 'color-mix(in srgb, var(--color-status-info) 20%, transparent)' };
     case 'agent_start':
     case 'agent_end':
-      return { color: '#34d399', bg: 'rgba(52, 211, 153, 0.06)', border: 'rgba(52, 211, 153, 0.2)' };
+      return { color: 'var(--color-status-success)', bg: 'var(--color-status-success-alpha-08)', border: 'var(--color-status-success-alpha-20)' };
     case 'message':
     case 'chat':
       return { color: 'var(--pc-accent)', bg: 'var(--pc-accent-glow)', border: 'var(--pc-accent-dim)' };
     case 'health':
     case 'status':
-      return { color: 'var(--color-status-success)', bg: 'rgba(0, 230, 138, 0.06)', border: 'rgba(0, 230, 138, 0.2)' };
+      return { color: 'var(--color-status-success)', bg: 'var(--color-status-success-alpha-08)', border: 'var(--color-status-success-alpha-20)' };
     default:
       return { color: 'var(--pc-text-muted)', bg: 'var(--pc-hover)', border: 'var(--pc-border)' };
   }
@@ -44,8 +46,27 @@ function eventTypeStyle(type: string): { color: string; bg: string; border: stri
 
 interface LogEntry { id: string; event: SSEEvent; }
 
+const LOG_STORAGE_KEY = 'zeroclaw_live_logs';
+const MAX_PERSISTED_LOGS = 200;
+
+function loadPersistedLogs(): LogEntry[] {
+  try {
+    const raw = sessionStorage.getItem(LOG_STORAGE_KEY);
+    if (!raw) return [];
+    return JSON.parse(raw) as LogEntry[];
+  } catch {
+    return [];
+  }
+}
+
+function persistLogs(entries: LogEntry[]): void {
+  try {
+    sessionStorage.setItem(LOG_STORAGE_KEY, JSON.stringify(entries.slice(-MAX_PERSISTED_LOGS)));
+  } catch { /* QuotaExceeded */ }
+}
+
 export default function Logs() {
-  const [entries, setEntries] = useState<LogEntry[]>([]);
+  const [entries, setEntries] = useState<LogEntry[]>(() => loadPersistedLogs());
   const [paused, setPaused] = useState(false);
   const [connected, setConnected] = useState(false);
   const [autoScroll, setAutoScroll] = useState(true);
@@ -54,12 +75,41 @@ export default function Logs() {
   const containerRef = useRef<HTMLDivElement>(null);
   const sseRef = useRef<SSEClient | null>(null);
   const pausedRef = useRef(false);
-  const entryIdRef = useRef(0);
+  const entryIdRef = useRef(entries.length);
+
+  // Persist logs to sessionStorage so they survive tab switches
+  useEffect(() => { persistLogs(entries); }, [entries]);
 
   // Keep pausedRef in sync
   useEffect(() => { pausedRef.current = paused; }, [paused]);
 
   useEffect(() => {
+    // Fetch recent event history so logs are visible even if the tab was closed
+    const token = getToken();
+    const headers: Record<string, string> = {};
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+
+    fetch(`${apiOrigin}${basePath}/api/events/history`, { headers })
+      .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
+      .then(({ events }: { events: SSEEvent[] }) => {
+        if (!Array.isArray(events) || events.length === 0) return;
+        const historical: LogEntry[] = events.map((evt, i) => ({
+          id: `hist-${i}`,
+          event: { ...evt, type: evt.type ?? 'unknown' },
+        }));
+        setEntries((prev) => {
+          // Deduplicate: keep history entries older than the earliest existing entry
+          const earliest = prev[0]?.event.timestamp;
+          const fresh = earliest
+            ? historical.filter((e) => !e.event.timestamp || e.event.timestamp < earliest)
+            : historical;
+          const merged = [...fresh, ...prev];
+          return merged.length > 500 ? merged.slice(-500) : merged;
+        });
+        entryIdRef.current += events.length;
+      })
+      .catch(() => {}); // History is best-effort
+
     const client = new SSEClient();
 
     client.onConnect = () => {

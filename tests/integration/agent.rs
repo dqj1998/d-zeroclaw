@@ -5,11 +5,11 @@
 //! external service dependencies. They complement the unit tests in
 //! `src/agent/tests.rs` by running at the integration test boundary.
 //!
-//! Ref: https://github.com/zeroclaw-labs/zeroclaw/issues/618 (item 6)
+//! Ref: <https://github.com/zeroclaw-labs/zeroclaw/issues/618> (item 6)
 
 use crate::support::helpers::{
-    build_agent, build_agent_xml, build_recording_agent, text_response, tool_response,
-    StaticMemoryLoader,
+    StaticMemoryLoader, build_agent, build_agent_xml, build_recording_agent, text_response,
+    tool_response,
 };
 use crate::support::{CountingTool, EchoTool, MockProvider, RecordingProvider};
 use zeroclaw::providers::traits::ChatMessage;
@@ -39,6 +39,7 @@ async fn e2e_single_tool_call_cycle() {
             id: "tc1".into(),
             name: "echo".into(),
             arguments: r#"{"message": "hello from tool"}"#.into(),
+            extra_content: None,
         }]),
         text_response("Tool executed successfully"),
     ]));
@@ -61,11 +62,13 @@ async fn e2e_multi_step_tool_chain() {
             id: "tc1".into(),
             name: "counter".into(),
             arguments: "{}".into(),
+            extra_content: None,
         }]),
         tool_response(vec![ToolCall {
             id: "tc2".into(),
             name: "counter".into(),
             arguments: "{}".into(),
+            extra_content: None,
         }]),
         text_response("Done after 2 tool calls"),
     ]));
@@ -136,6 +139,7 @@ async fn e2e_unknown_tool_recovery() {
             id: "tc1".into(),
             name: "nonexistent_tool".into(),
             arguments: "{}".into(),
+            extra_content: None,
         }]),
         text_response("Recovered from unknown tool"),
     ]));
@@ -159,11 +163,13 @@ async fn e2e_parallel_tool_dispatch() {
                 id: "tc1".into(),
                 name: "counter".into(),
                 arguments: "{}".into(),
+                extra_content: None,
             },
             ToolCall {
                 id: "tc2".into(),
                 name: "counter".into(),
                 arguments: "{}".into(),
+                extra_content: None,
             },
         ]),
         text_response("Both tools ran"),
@@ -260,7 +266,7 @@ async fn e2e_multi_turn_history_fidelity() {
 async fn e2e_memory_enrichment_injects_context() {
     let (provider, recorded) = RecordingProvider::new(vec![text_response("enriched response")]);
 
-    let memory_context = "[Memory context]\n- user_name: test_user\n\n";
+    let memory_context = "[Memory context]\n- user_name: test_user\n[/Memory context]\n\n";
     let loader = StaticMemoryLoader::new(memory_context);
 
     let mut agent = build_recording_agent(Box::new(provider), vec![], Some(Box::new(loader)));
@@ -273,8 +279,8 @@ async fn e2e_memory_enrichment_injects_context() {
     assert_eq!(requests.len(), 1);
     let user_msg = requests[0].iter().find(|m| m.role == "user").unwrap();
     assert!(
-        user_msg.content.starts_with("[Memory context]"),
-        "User message should start with memory context, got: {}",
+        user_msg.content.contains("[Memory context]"),
+        "User message should contain memory context, got: {}",
         user_msg.content,
     );
     assert!(
@@ -292,7 +298,7 @@ async fn e2e_memory_enrichment_injects_context() {
     match &history[1] {
         ConversationMessage::Chat(c) => {
             assert_eq!(c.role, "user");
-            assert!(c.content.starts_with("[Memory context]"));
+            assert!(c.content.contains("[Memory context]"));
             assert!(c.content.ends_with("hello"));
         }
         other => panic!("Expected Chat variant for user message, got: {other:?}"),
@@ -306,7 +312,7 @@ async fn e2e_multi_turn_with_memory_enrichment() {
     let (provider, recorded) =
         RecordingProvider::new(vec![text_response("answer 1"), text_response("answer 2")]);
 
-    let memory_context = "[Memory context]\n- project: zeroclaw\n\n";
+    let memory_context = "[Memory context]\n- project: zeroclaw\n[/Memory context]\n\n";
     let loader = StaticMemoryLoader::new(memory_context);
 
     let mut agent = build_recording_agent(Box::new(provider), vec![], Some(Box::new(loader)));

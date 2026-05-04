@@ -31,49 +31,75 @@
     clippy::unnecessary_map_or,
     clippy::unused_self,
     clippy::cast_precision_loss,
-    clippy::unnecessary_wraps,
-    dead_code
+    clippy::unnecessary_wraps
 )]
 
 use clap::Subcommand;
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "agent-runtime")]
 pub mod agent;
+#[cfg(feature = "agent-runtime")]
 pub(crate) mod approval;
+#[cfg(feature = "agent-runtime")]
 pub(crate) mod auth;
+#[cfg(feature = "agent-runtime")]
 pub mod channels;
-pub(crate) mod cli_input;
 pub mod commands;
 pub mod config;
+#[cfg(feature = "agent-runtime")]
 pub(crate) mod cost;
-pub(crate) mod cron;
+#[cfg(feature = "agent-runtime")]
+pub mod cron;
+#[cfg(feature = "agent-runtime")]
 pub(crate) mod daemon;
+#[cfg(feature = "agent-runtime")]
 pub(crate) mod doctor;
+#[cfg(feature = "gateway")]
 pub mod gateway;
+#[cfg(feature = "agent-runtime")]
 pub mod hands;
+#[cfg(feature = "agent-runtime")]
 pub(crate) mod hardware;
+#[cfg(feature = "agent-runtime")]
 pub(crate) mod health;
+#[cfg(feature = "agent-runtime")]
 pub(crate) mod heartbeat;
+#[cfg(feature = "agent-runtime")]
 pub mod hooks;
-pub mod i18n;
-pub(crate) mod identity;
+#[cfg(feature = "agent-runtime")]
 pub(crate) mod integrations;
 pub mod memory;
-pub(crate) mod migration;
+#[cfg(feature = "agent-runtime")]
 pub(crate) mod multimodal;
+#[cfg(feature = "agent-runtime")]
 pub mod nodes;
+#[cfg(feature = "agent-runtime")]
 pub mod observability;
-pub(crate) mod onboard;
+#[cfg(feature = "agent-runtime")]
 pub mod peripherals;
+#[cfg(feature = "agent-runtime")]
+pub mod platform;
 pub mod providers;
+#[cfg(feature = "agent-runtime")]
 pub mod rag;
-pub mod runtime;
+#[cfg(feature = "agent-runtime")]
+pub mod routines;
+#[cfg(feature = "agent-runtime")]
 pub(crate) mod security;
+#[cfg(feature = "agent-runtime")]
 pub(crate) mod service;
+#[cfg(feature = "agent-runtime")]
 pub(crate) mod skills;
+#[cfg(feature = "agent-runtime")]
+pub mod sop;
+#[cfg(feature = "agent-runtime")]
 pub mod tools;
+#[cfg(feature = "agent-runtime")]
+pub(crate) mod trust;
+#[cfg(feature = "agent-runtime")]
 pub(crate) mod tunnel;
-pub(crate) mod util;
+#[cfg(feature = "agent-runtime")]
 pub mod verifiable_intent;
 
 #[cfg(feature = "plugins-wasm")]
@@ -162,6 +188,15 @@ pub enum ServiceCommands {
     Status,
     /// Uninstall daemon service unit
     Uninstall,
+    /// Tail daemon service logs
+    Logs {
+        /// Number of lines to show (default: 50)
+        #[arg(short = 'n', long, default_value = "50")]
+        lines: usize,
+        /// Follow log output (like tail -f)
+        #[arg(short, long)]
+        follow: bool,
+    },
 }
 
 /// Channel management subcommands
@@ -257,6 +292,14 @@ pub enum SkillCommands {
     Remove {
         /// Skill name to remove
         name: String,
+    },
+    /// Run TEST.sh validation for a skill (or all skills)
+    Test {
+        /// Skill name to test; omit for all skills
+        name: Option<String>,
+        /// Show verbose output
+        #[arg(long)]
+        verbose: bool,
     },
 }
 
@@ -384,9 +427,9 @@ Update one or more fields of an existing scheduled task.
 Only the fields you specify are changed; others remain unchanged.
 
 Examples:
-  zeroclaw cron update <task-id> --expression '0 8 * * *'
-  zeroclaw cron update <task-id> --tz Europe/London --name 'Morning check'
-  zeroclaw cron update <task-id> --command 'Updated message'")]
+  zeroclaw cron update TASK_ID --expression '0 8 * * *'
+  zeroclaw cron update TASK_ID --tz Europe/London --name 'Morning check'
+  zeroclaw cron update TASK_ID --command 'Updated message'")]
     Update {
         /// Task ID
         id: String,
@@ -560,4 +603,21 @@ Examples:
     },
     /// Flash ZeroClaw firmware to Nucleo-F401RE (builds + probe-rs run)
     FlashNucleo,
+}
+
+/// SOP management subcommands
+#[derive(Subcommand, Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum SopCommands {
+    /// List loaded SOPs
+    List,
+    /// Validate SOP definitions
+    Validate {
+        /// SOP name to validate (all if omitted)
+        name: Option<String>,
+    },
+    /// Show details of an SOP
+    Show {
+        /// Name of the SOP to show
+        name: String,
+    },
 }

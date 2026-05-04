@@ -48,7 +48,7 @@ jobs:
       BOT_FORK_REPO: ${{ vars.HOMEBREW_CORE_BOT_FORK_REPO }}
       BOT_EMAIL: ${{ vars.HOMEBREW_CORE_BOT_EMAIL }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 0
 
@@ -103,6 +103,8 @@ jobs:
         env:
           HOMEBREW_CORE_BOT_TOKEN: ${{ secrets.HOMEBREW_UPSTREAM_PR_TOKEN || secrets.HOMEBREW_CORE_BOT_TOKEN }}
           GH_TOKEN: ${{ secrets.HOMEBREW_UPSTREAM_PR_TOKEN || secrets.HOMEBREW_CORE_BOT_TOKEN }}
+          TARBALL_URL: ${{ steps.release_meta.outputs.tarball_url }}
+          TARBALL_SHA: ${{ steps.release_meta.outputs.tarball_sha }}
         run: |
           set -euo pipefail
 
@@ -155,8 +157,13 @@ jobs:
             echo "branch_name=$branch_name" >> "$GITHUB_OUTPUT"
           fi
 
-          tarball_url="$(grep 'tarball_url=' "$GITHUB_OUTPUT" | head -1 | cut -d= -f2-)"
-          tarball_sha="$(grep 'tarball_sha=' "$GITHUB_OUTPUT" | head -1 | cut -d= -f2-)"
+          tarball_url="${TARBALL_URL}"
+          tarball_sha="${TARBALL_SHA}"
+
+          if [[ -z "$tarball_url" || -z "$tarball_sha" ]]; then
+            echo "::error::tarball_url or tarball_sha is empty — release_meta step output not propagated."
+            exit 1
+          fi
 
           perl -0pi -e "s|^  url \".*\"|  url \"${tarball_url}\"|m" "$formula_file"
           perl -0pi -e "s|^  sha256 \".*\"|  sha256 \"${tarball_sha}\"|m" "$formula_file"
@@ -197,6 +204,12 @@ jobs:
           repo_dir="${TMP_REPO}/homebrew-core"
           fork_owner="${BOT_FORK_REPO%%/*}"
           bot_email="${BOT_EMAIL:-${fork_owner}@users.noreply.github.com}"
+
+          # Pre-flight: verify token has push access to the fork
+          # Note: classic PATs may not return .permissions on forked repos; treat as warning, not hard fail.
+          if ! gh api "repos/${BOT_FORK_REPO}" --jq '.permissions.push' 2>/dev/null | grep -q true; then
+            echo "::warning::Could not confirm push access to ${BOT_FORK_REPO} via API (classic PATs may not report fork permissions). Attempting push anyway."
+          fi
 
           git -C "$repo_dir" config user.name "$fork_owner"
           git -C "$repo_dir" config user.email "$bot_email"
