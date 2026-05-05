@@ -489,6 +489,94 @@ async fn send_discord_message_json(
     Ok(())
 }
 
+fn discord_interaction_user_id(event_data: &serde_json::Value) -> Option<&str> {
+    event_data
+        .get("member")
+        .and_then(|member| member.get("user"))
+        .and_then(|user| user.get("id"))
+        .and_then(serde_json::Value::as_str)
+        .or_else(|| {
+            event_data
+                .get("user")
+                .and_then(|user| user.get("id"))
+                .and_then(serde_json::Value::as_str)
+        })
+}
+
+fn discord_interaction_option_tokens(options: &[serde_json::Value], tokens: &mut Vec<String>) {
+    for option in options {
+        let Some(name) = option.get("name").and_then(serde_json::Value::as_str) else {
+            continue;
+        };
+
+        if let Some(nested_options) = option.get("options").and_then(serde_json::Value::as_array) {
+            tokens.push(name.to_string());
+            discord_interaction_option_tokens(nested_options, tokens);
+            continue;
+        }
+
+        let Some(value) = option.get("value") else {
+            continue;
+        };
+
+        if let Some(value_text) = value.as_str() {
+            tokens.push(value_text.to_string());
+        } else if value.is_boolean() || value.is_number() {
+            tokens.push(value.to_string());
+        } else {
+            tokens.push(name.to_string());
+        }
+    }
+}
+
+fn discord_interaction_command_content(event_data: &serde_json::Value) -> Option<String> {
+    let command_name = event_data
+        .get("data")
+        .and_then(|data| data.get("name"))
+        .and_then(serde_json::Value::as_str)?;
+
+    let mut tokens = vec![format!("/{command_name}")];
+    if let Some(options) = event_data
+        .get("data")
+        .and_then(|data| data.get("options"))
+        .and_then(serde_json::Value::as_array)
+    {
+        discord_interaction_option_tokens(options, &mut tokens);
+    }
+
+    Some(tokens.join(" "))
+}
+
+async fn acknowledge_discord_interaction(
+    client: &reqwest::Client,
+    interaction_id: &str,
+    interaction_token: &str,
+    command_content: &str,
+) -> anyhow::Result<()> {
+    let url = format!(
+        "https://discord.com/api/v10/interactions/{interaction_id}/{interaction_token}/callback"
+    );
+    let body = json!({
+        "type": 4,
+        "data": {
+            "content": format!("ZeroClaw received `{command_content}`. Replying in this channel."),
+            "flags": 64
+        }
+    });
+
+    let resp = client.post(&url).json(&body).send().await?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let err = resp
+            .text()
+            .await
+            .unwrap_or_else(|e| format!("<failed to read response body: {e}>"));
+        anyhow::bail!("Discord interaction acknowledgement failed ({status}): {err}");
+    }
+
+    Ok(())
+}
+
 async fn send_discord_message_with_files(
     client: &reqwest::Client,
     bot_token: &str,
@@ -569,6 +657,95 @@ async fn send_discord_message_json_with_id(
         .and_then(|v| v.as_str())
         .map(|s| s.to_string())
         .ok_or_else(|| anyhow::anyhow!("Discord send response missing 'id' field"))
+}
+
+/// Send an approval prompt with three inline buttons (Approve / Deny / Always).
+/// Returns the Discord message ID so the caller can update the message later.
+async fn send_discord_approval_message(
+    client: &reqwest::Client,
+    bot_token: &str,
+    channel_id: &str,
+    content: &str,
+    approval_token: &str,
+) -> anyhow::Result<String> {
+    let url = format!("https://discord.com/api/v10/channels/{channel_id}/messages");
+    let body = json!({
+        "content": content,
+        "components": [{
+            "type": 1,
+            "components": [
+                {
+                    "type": 2, "style": 3,
+                    "label": "✅ Approve",
+                    "custom_id": format!("approval:{}:approve", approval_token)
+                },
+                {
+                    "type": 2, "style": 4,
+                    "label": "❌ Deny",
+                    "custom_id": format!("approval:{}:deny", approval_token)
+                },
+                {
+                    "type": 2, "style": 1,
+                    "label": "✅✅ Always",
+                    "custom_id": format!("approval:{}:always", approval_token)
+                }
+            ]
+        }]
+    });
+
+    let resp = client
+        .post(&url)
+        .header("Authorization", format!("Bot {bot_token}"))
+        .json(&body)
+        .send()
+        .await?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let err = resp
+            .text()
+            .await
+            .unwrap_or_else(|e| format!("<failed to read response body: {e}>"));
+        anyhow::bail!("Discord send approval message failed ({status}): {err}");
+    }
+
+    let resp_json: serde_json::Value = resp.json().await?;
+    resp_json
+        .get("id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .ok_or_else(|| anyhow::anyhow!("Discord approval response missing 'id' field"))
+}
+
+/// Acknowledge a button-click interaction and update the original message to
+/// replace the buttons with a result label (type 7 = UPDATE_MESSAGE).
+async fn acknowledge_discord_button_interaction(
+    client: &reqwest::Client,
+    interaction_id: &str,
+    interaction_token: &str,
+    result_label: &str,
+) -> anyhow::Result<()> {
+    let url = format!(
+        "https://discord.com/api/v10/interactions/{interaction_id}/{interaction_token}/callback"
+    );
+    let body = json!({
+        "type": 7,
+        "data": {
+            "content": result_label,
+            "components": []
+        }
+    });
+
+    let resp = client.post(&url).json(&body).send().await?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let err = resp
+            .text()
+            .await
+            .unwrap_or_else(|e| format!("<failed to read response body: {e}>"));
+        anyhow::bail!("Discord button interaction ack failed ({status}): {err}");
+    }
+    Ok(())
 }
 
 /// Edit an existing Discord message via PATCH.
@@ -1150,8 +1327,174 @@ impl Channel for DiscordChannel {
                         _ => {}
                     }
 
-                    // Only handle MESSAGE_CREATE (opcode 0, type "MESSAGE_CREATE")
                     let event_type = event.get("t").and_then(|t| t.as_str()).unwrap_or("");
+
+                    if event_type == "INTERACTION_CREATE" {
+                        let Some(event_data) = event.get("d") else {
+                            continue;
+                        };
+
+                        // Type 3 = message component (button click).
+                        if event_data
+                            .get("type")
+                            .and_then(serde_json::Value::as_u64)
+                            == Some(3)
+                        {
+                            let custom_id = event_data
+                                .get("data")
+                                .and_then(|d| d.get("custom_id"))
+                                .and_then(serde_json::Value::as_str)
+                                .unwrap_or("");
+
+                            // Only handle our approval buttons.
+                            if let Some(rest) = custom_id.strip_prefix("approval:") {
+                                let author_id =
+                                    discord_interaction_user_id(event_data).unwrap_or("unknown");
+
+                                if !self.is_user_allowed(author_id) {
+                                    tracing::warn!(
+                                        "Discord: ignoring button click from unauthorized user: {author_id}"
+                                    );
+                                    continue;
+                                }
+
+                                let interaction_id = event_data
+                                    .get("id")
+                                    .and_then(serde_json::Value::as_str)
+                                    .unwrap_or("");
+                                let interaction_token = event_data
+                                    .get("token")
+                                    .and_then(serde_json::Value::as_str)
+                                    .unwrap_or("");
+
+                                if let Some((approval_token, action)) = rest.rsplit_once(':') {
+                                    let response = match action {
+                                        "approve" => ChannelApprovalResponse::Approve,
+                                        "always" => ChannelApprovalResponse::AlwaysApprove,
+                                        _ => ChannelApprovalResponse::Deny,
+                                    };
+                                    let result_label = match &response {
+                                        ChannelApprovalResponse::Approve => "✅ Approved",
+                                        ChannelApprovalResponse::AlwaysApprove => {
+                                            "✅✅ Always approved"
+                                        }
+                                        ChannelApprovalResponse::Deny => "❌ Denied",
+                                    };
+                                    if !interaction_id.is_empty()
+                                        && !interaction_token.is_empty()
+                                        && let Err(e) = acknowledge_discord_button_interaction(
+                                            &self.http_client(),
+                                            interaction_id,
+                                            interaction_token,
+                                            result_label,
+                                        )
+                                        .await
+                                    {
+                                        tracing::warn!(
+                                            "Discord: failed to ack button interaction: {e}"
+                                        );
+                                    }
+                                    let mut map = self.pending_approvals.lock().await;
+                                    if let Some(sender) = map.remove(approval_token) {
+                                        let _ = sender.send(response);
+                                    }
+                                }
+                            }
+                            continue;
+                        }
+
+                        // Type 2 = application command (slash command).
+                        if event_data
+                            .get("type")
+                            .and_then(serde_json::Value::as_u64)
+                            != Some(2)
+                        {
+                            continue;
+                        }
+
+                        let Some(author_id) = discord_interaction_user_id(event_data) else {
+                            tracing::warn!("Discord: ignoring interaction without user id");
+                            continue;
+                        };
+
+                        if !self.is_user_allowed(author_id) {
+                            tracing::warn!("Discord: ignoring interaction from unauthorized user: {author_id}");
+                            continue;
+                        }
+
+                        if let Some(ref gid) = guild_filter {
+                            let interaction_guild = event_data
+                                .get("guild_id")
+                                .and_then(serde_json::Value::as_str);
+                            if let Some(guild_id) = interaction_guild
+                                && guild_id != gid {
+                                    continue;
+                                }
+                        }
+
+                        let channel_id = event_data
+                            .get("channel_id")
+                            .and_then(serde_json::Value::as_str)
+                            .unwrap_or("")
+                            .to_string();
+                        if channel_id.is_empty() {
+                            tracing::warn!("Discord: ignoring interaction without channel id");
+                            continue;
+                        }
+
+                        let interaction_id = event_data
+                            .get("id")
+                            .and_then(serde_json::Value::as_str)
+                            .unwrap_or("");
+                        let interaction_token = event_data
+                            .get("token")
+                            .and_then(serde_json::Value::as_str)
+                            .unwrap_or("");
+                        let Some(command_content) = discord_interaction_command_content(event_data) else {
+                            tracing::warn!("Discord: ignoring interaction without command name");
+                            continue;
+                        };
+
+                        if !interaction_id.is_empty()
+                            && !interaction_token.is_empty()
+                            && let Err(err) = acknowledge_discord_interaction(
+                                &self.http_client(),
+                                interaction_id,
+                                interaction_token,
+                                &command_content,
+                            )
+                            .await
+                        {
+                            tracing::warn!("Discord: failed to acknowledge interaction {interaction_id}: {err}");
+                        }
+
+                        let channel_msg = ChannelMessage {
+                            id: if interaction_id.is_empty() {
+                                Uuid::new_v4().to_string()
+                            } else {
+                                format!("discord_interaction_{interaction_id}")
+                            },
+                            sender: author_id.to_string(),
+                            reply_target: channel_id,
+                            content: command_content,
+                            channel: "discord".to_string(),
+                            timestamp: std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_secs(),
+                            thread_ts: None,
+                            interruption_scope_id: None,
+                            attachments: vec![],
+                        };
+
+                        if tx.send(channel_msg).await.is_err() {
+                            break;
+                        }
+
+                        continue;
+                    }
+
+                    // Only handle MESSAGE_CREATE (opcode 0, type "MESSAGE_CREATE")
                     if event_type != "MESSAGE_CREATE" {
                         continue;
                     }
@@ -1730,9 +2073,9 @@ impl Channel for DiscordChannel {
         request: &ChannelApprovalRequest,
     ) -> anyhow::Result<Option<ChannelApprovalResponse>> {
         let token = crate::util::new_approval_token();
-        let text = format!(
-            "APPROVAL REQUIRED [{}]\nTool: {}\nArgs: {}\n\nReply: \"{} yes\", \"{} no\", or \"{} always\"",
-            token, request.tool_name, request.arguments_summary, token, token, token,
+        let content = format!(
+            "🔐 **Tool approval required**\n\n**Tool:** {}\n**Args:** {}\n\nTap a button to respond:",
+            request.tool_name, request.arguments_summary,
         );
 
         let (tx, rx) = oneshot::channel();
@@ -1743,7 +2086,15 @@ impl Channel for DiscordChannel {
 
         // Strip thread suffix — approval message goes to the channel root.
         let channel_id = recipient.split(':').next().unwrap_or(recipient);
-        if let Err(err) = self.send(&SendMessage::new(text, channel_id)).await {
+        if let Err(err) = send_discord_approval_message(
+            &self.http_client(),
+            &self.bot_token,
+            channel_id,
+            &content,
+            &token,
+        )
+        .await
+        {
             self.pending_approvals.lock().await.remove(&token);
             return Err(err);
         }
