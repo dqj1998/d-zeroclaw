@@ -2740,6 +2740,14 @@ pub struct BrowserConfig {
     /// Optional Chrome/Chromium executable path for rust-native backend
     #[serde(default)]
     pub native_chrome_path: Option<String>,
+    /// Attach to an existing Chrome/Chromium instance via its CDP port instead of
+    /// launching a new browser. Set to the `host:port` of a Chrome started with
+    /// `--remote-debugging-port=9222` (e.g. `"127.0.0.1:9222"`).
+    /// Requires `backend = "rust_native"`. ChromeDriver (`native_webdriver_url`)
+    /// must still be running; it will attach to the existing browser rather than
+    /// spawning a new one. `native_headless` is ignored when this is set.
+    #[serde(default)]
+    pub native_cdp_address: Option<String>,
     /// Computer-use sidecar configuration
     #[serde(default)]
     #[nested]
@@ -2768,6 +2776,7 @@ impl Default for BrowserConfig {
             native_headless: default_true(),
             native_webdriver_url: default_browser_webdriver_url(),
             native_chrome_path: None,
+            native_cdp_address: None,
             computer_use: BrowserComputerUseConfig::default(),
         }
     }
@@ -14201,6 +14210,7 @@ default_temperature = 0.7
             native_headless: false,
             native_webdriver_url: "http://localhost:4444".into(),
             native_chrome_path: Some("/usr/bin/chromium".into()),
+            native_cdp_address: Some("127.0.0.1:9222".into()),
             computer_use: BrowserComputerUseConfig {
                 endpoint: "https://computer-use.example.com/v1/actions".into(),
                 api_key: Some("test-token".into()),

@@ -69,6 +69,8 @@ pub struct BrowserTool {
     native_webdriver_url: String,
     #[allow(dead_code)]
     native_chrome_path: Option<String>,
+    #[allow(dead_code)] // read only with browser-native feature
+    native_cdp_address: Option<String>,
     computer_use: ComputerUseConfig,
     #[cfg(feature = "browser-native")]
     native_state: tokio::sync::Mutex<native_backend::NativeBrowserState>,
@@ -213,6 +215,7 @@ impl BrowserTool {
             true,
             "http://127.0.0.1:9515".into(),
             None,
+            None,
             ComputerUseConfig::default(),
         )
     }
@@ -226,6 +229,7 @@ impl BrowserTool {
         native_headless: bool,
         native_webdriver_url: String,
         native_chrome_path: Option<String>,
+        native_cdp_address: Option<String>,
         computer_use: ComputerUseConfig,
     ) -> Self {
         Self {
@@ -236,6 +240,7 @@ impl BrowserTool {
             native_headless,
             native_webdriver_url,
             native_chrome_path,
+            native_cdp_address,
             computer_use,
             #[cfg(feature = "browser-native")]
             native_state: tokio::sync::Mutex::new(native_backend::NativeBrowserState::default()),
@@ -663,6 +668,7 @@ impl BrowserTool {
                     self.native_headless,
                     &self.native_webdriver_url,
                     self.native_chrome_path.as_deref(),
+                    self.native_cdp_address.as_deref(),
                 )
                 .await;
 
@@ -680,6 +686,7 @@ impl BrowserTool {
                             self.native_headless,
                             &self.native_webdriver_url,
                             self.native_chrome_path.as_deref(),
+                            self.native_cdp_address.as_deref(),
                         )
                         .await
                         .with_context(|| "rust_native backend retry after session reset failed")?
@@ -1143,10 +1150,11 @@ mod native_backend {
             headless: bool,
             webdriver_url: &str,
             chrome_path: Option<&str>,
+            cdp_address: Option<&str>,
         ) -> Result<Value> {
             match action {
                 BrowserAction::Open { url } => {
-                    self.ensure_session(headless, webdriver_url, chrome_path)
+                    self.ensure_session(headless, webdriver_url, chrome_path, cdp_address)
                         .await?;
                     let client = self.active_client()?;
                     client
@@ -1471,6 +1479,7 @@ mod native_backend {
             headless: bool,
             webdriver_url: &str,
             chrome_path: Option<&str>,
+            cdp_address: Option<&str>,
         ) -> Result<()> {
             if self.client.is_some() {
                 return Ok(());
@@ -1478,29 +1487,43 @@ mod native_backend {
 
             let mut capabilities: Map<String, Value> = Map::new();
             let mut chrome_options: Map<String, Value> = Map::new();
-            let mut args: Vec<Value> = Vec::new();
 
-            if headless {
-                args.push(Value::String("--headless=new".to_string()));
-                args.push(Value::String("--disable-gpu".to_string()));
-            }
-
-            // When running as a service (systemd/OpenRC), the browser sandbox
-            // fails because the process lacks a user namespace / session.
-            // --no-sandbox and --disable-dev-shm-usage are required in this context.
-            if super::is_service_environment() {
-                args.push(Value::String("--no-sandbox".to_string()));
-                args.push(Value::String("--disable-dev-shm-usage".to_string()));
-            }
-
-            if !args.is_empty() {
-                chrome_options.insert("args".to_string(), Value::Array(args));
-            }
-
-            if let Some(path) = chrome_path {
-                let trimmed = path.trim();
+            if let Some(addr) = cdp_address {
+                // Attach to an already-running Chrome via its remote-debugging port.
+                // ChromeDriver ignores launch args (headless, binary) when debuggerAddress is set.
+                let trimmed = addr.trim();
                 if !trimmed.is_empty() {
-                    chrome_options.insert("binary".to_string(), Value::String(trimmed.to_string()));
+                    chrome_options.insert(
+                        "debuggerAddress".to_string(),
+                        Value::String(trimmed.to_string()),
+                    );
+                }
+            } else {
+                let mut args: Vec<Value> = Vec::new();
+
+                if headless {
+                    args.push(Value::String("--headless=new".to_string()));
+                    args.push(Value::String("--disable-gpu".to_string()));
+                }
+
+                // When running as a service (systemd/OpenRC), the browser sandbox
+                // fails because the process lacks a user namespace / session.
+                // --no-sandbox and --disable-dev-shm-usage are required in this context.
+                if super::is_service_environment() {
+                    args.push(Value::String("--no-sandbox".to_string()));
+                    args.push(Value::String("--disable-dev-shm-usage".to_string()));
+                }
+
+                if !args.is_empty() {
+                    chrome_options.insert("args".to_string(), Value::Array(args));
+                }
+
+                if let Some(path) = chrome_path {
+                    let trimmed = path.trim();
+                    if !trimmed.is_empty() {
+                        chrome_options
+                            .insert("binary".to_string(), Value::String(trimmed.to_string()));
+                    }
                 }
             }
 
@@ -2369,6 +2392,7 @@ mod tests {
             true,
             "http://127.0.0.1:9515".into(),
             None,
+            None,
             ComputerUseConfig::default(),
         );
         assert_eq!(tool.configured_backend().unwrap(), BrowserBackendKind::Auto);
@@ -2384,6 +2408,7 @@ mod tests {
             "computer_use".into(),
             true,
             "http://127.0.0.1:9515".into(),
+            None,
             None,
             ComputerUseConfig::default(),
         );
@@ -2403,6 +2428,7 @@ mod tests {
             "computer_use".into(),
             true,
             "http://127.0.0.1:9515".into(),
+            None,
             None,
             ComputerUseConfig {
                 endpoint: "http://computer-use.example.com/v1/actions".into(),
@@ -2424,6 +2450,7 @@ mod tests {
             true,
             "http://127.0.0.1:9515".into(),
             None,
+            None,
             ComputerUseConfig {
                 endpoint: "https://computer-use.example.com/v1/actions".into(),
                 allow_remote_endpoint: true,
@@ -2444,6 +2471,7 @@ mod tests {
             "computer_use".into(),
             true,
             "http://127.0.0.1:9515".into(),
+            None,
             None,
             ComputerUseConfig {
                 max_coordinate_x: Some(100),
