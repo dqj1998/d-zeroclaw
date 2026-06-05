@@ -1,3 +1,5 @@
+@/Users/qingjie.du/HDD/CLAUDE.md
+
 # CLAUDE.md — ZeroClaw (Claude Code)
 
 > **Shared instructions live in [`AGENTS.md`](./AGENTS.md).**
