@@ -98,3 +98,6 @@ web/src/lib/api-generated.ts
 target/openapi.json
 /v[0-9]*.toml
 .worktrees/
+
+# Agent runtime state
+.omo/
