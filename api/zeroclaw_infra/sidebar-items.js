@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"mod":["debounce","session_backend","session_sqlite","session_store","stall_watchdog"]};
